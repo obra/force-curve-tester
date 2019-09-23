@@ -25,16 +25,31 @@ $ob->handshake('none');
 $ob->write_settings or die "no settings\n";
 
 warn "here";
-# Set output to kg f
-my $output_string = pack("C*", 0xaa, 0x04, 0x55);
+## Set output to kg f
+#my $output_string = pack("C*", 0xaa, 0x04, 0x55);
+#my       $count_out = $ob->write($output_string);
+#      warn "write failed\n"         unless ($count_out);
+#
+## set output to realtime
+#my $output_string = pack("C*", 0xaa, 0x03, 0x55);
+#       $count_out = $ob->write($output_string);
+#      warn "write failed\n"         unless ($count_out);
+#
+## zero output
+#my $output_string = pack("C*", 0xaa, 0x01, 0x55);
+#       $count_out = $ob->write($output_string);
+#      warn "write failed\n"         unless ($count_out);
+#
+
+for(my $i = 0; $i <= 255; $i++) {
+warn "Trying $i";
+my $output_string = pack("C*", 0xaa, $i, 0x55);
 my       $count_out = $ob->write($output_string);
       warn "write failed\n"         unless ($count_out);
+sleep 1;
+}
 
-# set output to realtime
-my $output_string = pack("C*", 0xaa, 0x03, 0x55);
-       $count_out = $ob->write($output_string);
-      warn "write failed\n"         unless ($count_out);
-
+warn "here";
 sub return_measurement(@) {
 	my @data = (@_);
 	if (ord($data[0]) == 0xAA &&  ord($data[6]) == 0x55) {
@@ -51,7 +66,6 @@ sub return_measurement(@) {
 }
 
 my @current_force_measurement;
-
 
 while(1){
     if (my $byte = $ob->read(1)) {
