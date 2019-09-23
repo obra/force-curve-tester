@@ -1,0 +1,32 @@
+#!/usr/bin/perl -w
+use warnings;
+use strict;
+
+
+use strict;
+use warnings;
+use Device::SerialPort qw( :PARAM :STAT 0.07 );
+
+my $offset = shift;
+my $port = '/dev/ttyACM0';
+my $ob = Device::SerialPort->new($port, 1)
+    || die "Can't open $port: $!";
+    
+
+my $data = $ob->databits(8);
+my $baud = $ob->baudrate(19200);
+my $parity = $ob->parity("none");
+$ob->buffers(8,8);
+$ob->stopbits(1);
+$ob->handshake('none');
+#$ob->handshake("rts");
+
+$ob->write_settings or die "no settings\n";
+#run_cmd("G21") ; # set output to mm;
+#run_cmd("G91") ; # set motion to relative
+run_cmd("G1 Z".$offset);
+sub run_cmd {
+	my $output_string =shift;
+	my       $count_out = $ob->write($output_string."\r");
+      warn "write failed\n"         unless ($count_out);
+}

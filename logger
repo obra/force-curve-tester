@@ -1,0 +1,75 @@
+#!/usr/bin/perl -w
+use warnings;
+use strict;
+
+
+use strict;
+use warnings;
+use Device::SerialPort qw( :PARAM :STAT 0.07 );
+
+
+my $port = '/dev/ttyUSB0';
+my $ob = Device::SerialPort->new($port, 1)
+    || die "Can't open $port: $!";
+    
+
+my $data = $ob->databits(8);
+my $baud = $ob->baudrate(57600);
+my $parity = $ob->parity("none");
+$ob->buffers(8,8);
+$ob->stopbits(1);
+$ob->handshake('none');
+#$ob->handshake("rts");
+
+
+$ob->write_settings or die "no settings\n";
+
+warn "here";
+# Set output to kg f
+my $output_string = pack("C*", 0xaa, 0x04, 0x55);
+my       $count_out = $ob->write($output_string);
+      warn "write failed\n"         unless ($count_out);
+
+# set output to realtime
+my $output_string = pack("C*", 0xaa, 0x03, 0x55);
+       $count_out = $ob->write($output_string);
+      warn "write failed\n"         unless ($count_out);
+
+sub return_measurement(@) {
+	my @data = (@_);
+	if (ord($data[0]) == 0xAA &&  ord($data[6]) == 0x55) {
+		if (ord($data[5]) == 0x2C) {
+		} elsif (ord($data[5]) == 0x0C) {
+		} else { warn "neither pos nor neg: ".ord($data[5]);}
+		my $value = ord($data[4]) + (256 * ord($data[3])) + (256 * 256 * ord($data[2])) + (256 * 256 * 256 * ord($data[1]));
+		if (ord($data[5]) == 0x0C) {
+			$value = 0-$value;
+		}
+		warn "Force measured: ".$value."\n";
+
+	}	
+}
+
+my @current_force_measurement;
+
+
+while(1){
+    if (my $byte = $ob->read(1)) {
+	if (ord($byte) ==  0xAA && ($#current_force_measurement >=5)) {  # 170
+		#		previous packet done;	
+		my @result = @current_force_measurement;
+		@current_force_measurement =  ($byte);
+		if ($#result == 6) {
+		return_measurement(@result);
+		}
+	} else {
+		push @current_force_measurement, $byte;
+	}
+		
+    }
+}
+
+
+
+$ob->write_drain;
+
