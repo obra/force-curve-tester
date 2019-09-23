@@ -8,7 +8,7 @@ use warnings;
 use Device::SerialPort qw( :PARAM :STAT 0.07 );
 
 
-my $port = '/dev/ttyUSB0';
+my $port = '/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0';
 my $ob = Device::SerialPort->new($port, 1)
     || die "Can't open $port: $!";
     
@@ -25,29 +25,22 @@ $ob->handshake('none');
 $ob->write_settings or die "no settings\n";
 
 warn "here";
-## Set output to kg f
-#my $output_string = pack("C*", 0xaa, 0x04, 0x55);
-#my       $count_out = $ob->write($output_string);
-#      warn "write failed\n"         unless ($count_out);
-#
-## set output to realtime
-#my $output_string = pack("C*", 0xaa, 0x03, 0x55);
-#       $count_out = $ob->write($output_string);
-#      warn "write failed\n"         unless ($count_out);
-#
-## zero output
-#my $output_string = pack("C*", 0xaa, 0x01, 0x55);
-#       $count_out = $ob->write($output_string);
-#      warn "write failed\n"         unless ($count_out);
-#
-
-for(my $i = 0; $i <= 255; $i++) {
-warn "Trying $i";
-my $output_string = pack("C*", 0xaa, $i, 0x55);
+# Set output to kg f
+my $output_string = pack("C*", 0xaa, 0x04, 0x55);
 my       $count_out = $ob->write($output_string);
       warn "write failed\n"         unless ($count_out);
-sleep 1;
-}
+
+# set output to realtime
+my $output_string = pack("C*", 0xaa, 0x03, 0x55);
+       $count_out = $ob->write($output_string);
+      warn "write failed\n"         unless ($count_out);
+
+# zero output
+my $output_string = pack("C*", 0xaa, 0x01, 0x55);
+       $count_out = $ob->write($output_string);
+      warn "write failed\n"         unless ($count_out);
+
+
 
 warn "here";
 sub return_measurement(@) {

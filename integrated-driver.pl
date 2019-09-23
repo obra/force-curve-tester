@@ -26,19 +26,20 @@ for(my $run = 1; $run <= $runs; $run++) {
 
 while (1) {
 
-run_gantry_cmd($gantry, "G1 Z-0.1");
+run_gantry_cmd($gantry, "G1 Z-0.01");
 
-my $result = average_n_measurements($samples_per_step);
+my $result = average_n_measurements(1);
 
-if ($result > 2) {
+if ($result > 1) {
 	warn "We're good to go: We've homed to the top of the switch";
+	sleep(1);
 	last;
 }
 }
 
 run_gantry_cmd($gantry, "G1 Z1");
 # Zero the force tester
-#run_force_tester_cmd($ft,0xaa,0x01,0x55);
+run_force_tester_cmd($ft,0xaa,0x01,0x55);
 
 # Throw away 10 measurements before we start off.
 my $result = average_n_measurements(10);
@@ -82,6 +83,12 @@ print $outfile join(",",@$row)."\n";
 
 }
 exit;
+
+
+sub bail_out {
+run_gantry_cmd($gantry, "G1 Z10");
+die "We had something crazy happen. bailed.";
+}
 
 sub average_n_measurements {
 	my $samples = shift;
@@ -136,7 +143,7 @@ sub run_gantry_cmd {
 
 sub init_ft {
 
-my $force_tester_port = '/dev/ttyUSB0';
+my $force_tester_port = '/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0';
 my $ft = Device::SerialPort->new($force_tester_port, 1)
     || die "Can't open $force_tester_port: $!";
 
@@ -171,7 +178,7 @@ my       $count_out = $ft->write($output_string);
 sub init_gantry {
 
 
-my $gantry_port = '/dev/ttyACM1';
+my $gantry_port = '/dev/serial/by-id/usb-Malyan_System_Malyan_3D_Printer_2060396E4752-if00';
 my $gantry = Device::SerialPort->new($gantry_port, 1)
     || die "Can't open $gantry_port: $!";
     
@@ -203,6 +210,9 @@ sub return_measurement {
 			$value = 0-$value;
 		}
 		#warn "Force measured: ".$value."\n";
+		if ($value > 250)	{
+			die "Got a bad measurement. Bailing out. We got $value\n";
+		}
 		return $value;
 	}	
 	else {
