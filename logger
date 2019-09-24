@@ -20,7 +20,7 @@ $ob->buffers(8,8);
 $ob->stopbits(1);
 $ob->handshake('none');
 #$ob->handshake("rts");
-
+$ob->datatype('raw');
 
 $ob->write_settings or die "no settings\n";
 
@@ -31,9 +31,9 @@ my       $count_out = $ob->write($output_string);
       warn "write failed\n"         unless ($count_out);
 
 # set output to realtime
-my $output_string = pack("C*", 0xaa, 0x03, 0x55);
-       $count_out = $ob->write($output_string);
-      warn "write failed\n"         unless ($count_out);
+#my $output_string = pack("C*", 0xaa, 0x03, 0x55);
+#       $count_out = $ob->write($output_string);
+#      warn "write failed\n"         unless ($count_out);
 
 # zero output
 my $output_string = pack("C*", 0xaa, 0x01, 0x55);
@@ -61,11 +61,14 @@ sub return_measurement(@) {
 my @current_force_measurement;
 
 while(1){
-    if (my $byte = $ob->read(1)) {
+    if (my $bytes = $ob->read(7)) {
+	foreach my $byte (split(//,$bytes)) {
+	printf('%#x ',ord($byte));
 	if (ord($byte) ==  0xAA && ($#current_force_measurement >=5)) {  # 170
 		#		previous packet done;	
 		my @result = @current_force_measurement;
 		@current_force_measurement =  ($byte);
+		print "\n";
 		if ($#result == 6) {
 		return_measurement(@result);
 		}
@@ -73,6 +76,7 @@ while(1){
 		push @current_force_measurement, $byte;
 	}
 		
+}
     }
 }
 

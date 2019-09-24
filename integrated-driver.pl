@@ -2,6 +2,7 @@
 use warnings;
 use strict;
 use bignum;
+use Time::HiRes qw(usleep nanosleep);
 
 use strict;
 use warnings;
@@ -12,9 +13,9 @@ my $type  = shift;
 my $gantry = init_gantry();
 
 my $ft = init_ft();
-
+my $keyscanner = init_keyscanner();
 my $step             = 0.01;
-my $samples_per_step = 10;
+my $samples_per_step = 5;
 my $runs             = 3;
 my $force_max        = 180;
 open(
@@ -25,7 +26,8 @@ open(
       . "-samples-averaged-per-step-"
       . time() . ".csv"
 );
-
+$ft->purge_rx();
+#my $result = average_n_measurements(100); # Clear the buffer, I hope
 for ( my $run = 1 ; $run <= $runs ; $run++ ) {
 
     while (1) {
@@ -33,10 +35,9 @@ for ( my $run = 1 ; $run <= $runs ; $run++ ) {
         run_gantry_cmd( $gantry, "G1 Z-0.01" );
 
         my $result = average_n_measurements(1);
-
+	warn "Dropping gantry. Got force $result\n";
         if ( $result > 1 ) {
             warn "We're good to go: We've homed to the top of the switch";
-            sleep(1);
             last;
         }
     }
@@ -44,21 +45,27 @@ for ( my $run = 1 ; $run <= $runs ; $run++ ) {
     run_gantry_cmd( $gantry, "G1 Z1" );
 
     # Zero the force tester
-    run_force_tester_cmd( $ft, 0xaa, 0x01, 0x55 );
+    #run_force_tester_cmd( $ft, 0xaa, 0x01, 0x55 );
+    # Zero the force tester
+    #run_force_tester_cmd( $ft, 0xaa, 0x01, 0x55 );
 
     # Throw away 10 measurements before we start off.
-    my $result = average_n_measurements(10);
+    # my $result = average_n_measurements(10);
 
     my @data;
     my $location = -1;
     warn "# Downstroke\n";
     while (1) {
-
+    run_gantry_cmd( $gantry, "G91" );    # set motion to relative
         run_gantry_cmd( $gantry, "G1 Z-" . $step );
-
+#	usleep(20);
+    # Throw away 10 measurements before we start off.
+    #   average_n_measurements(2);
+	$ft->purge_rx();
         my $result = average_n_measurements($samples_per_step);
-        push @data, [ $run, 'downstroke', $location, $result ];
-        warn "Run $run - Downstroke - $location mm: $result g\n";
+	my $actuated = read_keyscanner($keyscanner);
+        push @data, [ $run, 'downstroke', $location, $result, $actuated ];
+        warn "Run $run - Downstroke - $location mm: $result g - Actuated: $actuated\n";
         $location += $step;
         if ( $result > $force_max ) {
             warn "# Bottomed out after detecting $force_max g of force";
@@ -70,11 +77,16 @@ for ( my $run = 1 ; $run <= $runs ; $run++ ) {
     warn "Upstroke\n";
     while (1) {
 
+    run_gantry_cmd( $gantry, "G91" );    # set motion to relative
         run_gantry_cmd( $gantry, "G1 Z" . $step );
-
+#	usleep(20);
+    # Throw away 10 measurements before we start off.
+    #  average_n_measurements(2);
+	$ft->purge_rx();
         my $result = average_n_measurements($samples_per_step);
-        warn "Run - $run - Upstroke - $location mm: $result g\n";
-        push @data, [ $run, 'upstroke', $location, $result ];
+	my $actuated = read_keyscanner($keyscanner);
+        warn "Run - $run - Upstroke - $location mm: $result g - Actuated: $actuated\n";
+        push @data, [ $run, 'upstroke', $location, $result, $actuated];
         $location -= $step;
         if ( $result <= 0 && $location < -1 ) {
             warn "# All done!\n";
@@ -109,8 +121,15 @@ my @current_force_measurement;
 
 sub get_next_force_measurement {
 
+
+
+
+
     while (1) {
-        if ( my $byte = $ft->read(1) ) {
+    if (my $bytes = $ft->read(7)) {
+	foreach my $byte (split(//,$bytes)) {
+
+
             if ( ord($byte) == 0xAA && ( $#current_force_measurement >= 5 ) )
             {                        # 170
                                      #		previous packet done;
@@ -124,8 +143,29 @@ sub get_next_force_measurement {
                 push @current_force_measurement, $byte;
             }
 
+}
         }
     }
+}
+
+
+sub read_keyscanner {
+my $keyscanner = shift;
+my $InBytes = 1;
+
+my      $count_in = 0;
+my  $string_in;
+   # my $count_out     = $keyscanner->write('x');
+   # warn "write failed\n" unless ($count_out);
+#while (!$count_in) {
+     ($count_in, $string_in) = $keyscanner->read($InBytes);
+     # warn "read unsuccessful $InBytes != $count_in \n" unless ($count_in == $InBytes);
+#}
+my $bytes = $string_in;
+	if(!defined $bytes)  {
+	die "nothing from the keyscanner. is it connected and transmitting?";
+}
+	if ($bytes == 0) { return -1;} elsif ($bytes == 1) { return 1} else { return 0};
 }
 
 #run_gantry_cmd("G1 Z".$offset);
@@ -135,6 +175,28 @@ sub run_gantry_cmd {
     my $output_string = shift;
     my $count_out     = $gantry->write( $output_string . "\r" );
     warn "write failed\n" unless ($count_out);
+}
+
+sub init_keyscanner {
+
+    my $keyscanner_port =
+'/dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_5573631353735170C021-if00';
+    my $keyscanner = Device::SerialPort->new( $keyscanner_port, 1 )
+      || die "Can't open $keyscanner_port: $!";
+
+    my $data   = $keyscanner->databits(8);
+    my $baud   = $keyscanner->baudrate(9600);
+    my $parity = $keyscanner->parity("none");
+    $keyscanner->buffers( 1, 1 );
+    $keyscanner->stopbits(1);
+    #$keyscanner->handshake('none');
+
+    #$keyscanner->handshake("rts");
+
+    $keyscanner->write_settings or die "no settings\n";
+
+    return $keyscanner;
+
 }
 
 sub init_ft {
@@ -212,8 +274,11 @@ sub return_measurement {
             $value = 0 - $value;
         }
 
-        #warn "Force measured: ".$value."\n";
-        if ( $value > 250 ) {
+        if ( $value > 10000 ) {
+warn "Got a crazy measurement. discarding\n";
+	return get_next_force_measurement();
+	} elsif ($value > 4000) {
+
             die "Got a bad measurement. Bailing out. We got $value\n";
         }
         return $value;
