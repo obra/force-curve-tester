@@ -12,35 +12,28 @@ my $type  = shift;
 
 my $gantry = init_gantry();
 
-my $ft = init_ft();
-my $keyscanner = init_keyscanner();
+my $ft               = init_ft();
+my $keyscanner       = init_keyscanner();
 my $step             = 0.1;
 my $samples_per_step = 5;
 my $runs             = 3;
 my $force_max        = 180;
-open(
-    my $outfile,
-    ">",
-    "tester-$maker-$type-step-$step-mm-"
-      . $samples_per_step
-      . "-samples-averaged-per-step-"
-      . time() . ".csv"
-);
-for ( my $run = 1 ; $run <= $runs ; $run++ ) {
+open(my $outfile, ">", "tester-$maker-$type-step-$step-mm-" . $samples_per_step . "-samples-averaged-per-step-" . time() . ".csv");
+for (my $run = 1; $run <= $runs; $run++) {
 
     while (1) {
 
-        run_gantry_cmd( $gantry, "G1 Z-0.01" );
+        run_gantry_cmd($gantry, "G1 Z-0.01");
 
         my $result = average_n_measurements(1);
-	warn "Dropping gantry. Got force $result\n";
-        if ( $result > 1 ) {
+        warn "Dropping gantry. Got force $result\n";
+        if ($result > 1) {
             warn "We're good to go: We've homed to the top of the switch";
             last;
         }
     }
 
-    run_gantry_cmd( $gantry, "G1 Z1" );
+    run_gantry_cmd($gantry, "G1 Z1");
 
     # Zero the force tester
     #run_force_tester_cmd( $ft, 0xaa, 0x01, 0x55 );
@@ -54,14 +47,14 @@ for ( my $run = 1 ; $run <= $runs ; $run++ ) {
     my $location = -1;
     warn "# Downstroke\n";
     while (1) {
-    run_gantry_cmd( $gantry, "G91" );    # set motion to relative
-        run_gantry_cmd( $gantry, "G1 Z-" . $step );
-        my $result = average_n_measurements($samples_per_step);
-	my $actuated = read_keyscanner($keyscanner);
-        push @data, [ $run, 'downstroke', $location, $result, $actuated ];
+        run_gantry_cmd($gantry, "G91");             # set motion to relative
+        run_gantry_cmd($gantry, "G1 Z-" . $step);
+        my $result   = average_n_measurements($samples_per_step);
+        my $actuated = read_keyscanner($keyscanner);
+        push @data, [$run, 'downstroke', $location, $result, $actuated];
         warn "Run $run - Downstroke - $location mm: $result g - Actuated: $actuated\n";
         $location += $step;
-        if ( $result > $force_max ) {
+        if ($result > $force_max) {
             warn "# Bottomed out after detecting $force_max g of force";
             last;
         }
@@ -71,36 +64,36 @@ for ( my $run = 1 ; $run <= $runs ; $run++ ) {
     warn "Upstroke\n";
     while (1) {
 
-    run_gantry_cmd( $gantry, "G91" );    # set motion to relative
-        run_gantry_cmd( $gantry, "G1 Z" . $step );
-        my $result = average_n_measurements($samples_per_step);
-	my $actuated = read_keyscanner($keyscanner);
+        run_gantry_cmd($gantry, "G91");            # set motion to relative
+        run_gantry_cmd($gantry, "G1 Z" . $step);
+        my $result   = average_n_measurements($samples_per_step);
+        my $actuated = read_keyscanner($keyscanner);
         warn "Run - $run - Upstroke - $location mm: $result g - Actuated: $actuated\n";
-        push @data, [ $run, 'upstroke', $location, $result, $actuated];
+        push @data, [$run, 'upstroke', $location, $result, $actuated];
         $location -= $step;
-        if ( $result <= 0 && $location < -1 ) {
+        if ($result <= 0 && $location < -1) {
             warn "# All done!\n";
             last;
         }
 
     }
     for my $row (@data) {
-        print $outfile join( ",", @$row ) . "\n";
+        print $outfile join(",", @$row) . "\n";
     }
 
 }
 exit;
 
 sub bail_out {
-    run_gantry_cmd( $gantry, "G1 Z10" );
+    run_gantry_cmd($gantry, "G1 Z10");
     die "We had something crazy happen. bailed.";
 }
 
 sub average_n_measurements {
     my $samples = shift;
     my $result  = 0;
-	$ft->purge_rx();
-    for ( my $i = 0 ; $i < $samples ; $i++ ) {
+    $ft->purge_rx();
+    for (my $i = 0; $i < $samples; $i++) {
         my $point = get_next_force_measurement();
         $result += $point;
     }
@@ -112,51 +105,47 @@ my @current_force_measurement;
 
 sub get_next_force_measurement {
 
-
-
-
-
     while (1) {
-    if (my $bytes = $ft->read(7)) {
-	foreach my $byte (split(//,$bytes)) {
+        if (my $bytes = $ft->read(7)) {
+            foreach my $byte (split(//, $bytes)) {
 
-
-            if ( ord($byte) == 0xAA && ( $#current_force_measurement >= 5 ) )
-            {                        # 170
-                                     #		previous packet done;
-                my @result = @current_force_measurement;
-                @current_force_measurement = ($byte);
-                if ( $#result == 6 ) {
-                    return return_measurement(@result);
+                if (ord($byte) == 0xAA && ($#current_force_measurement >= 5)) {    # 170
+                                                                                   #		previous packet done;
+                    my @result = @current_force_measurement;
+                    @current_force_measurement = ($byte);
+                    if ($#result == 6) {
+                        return return_measurement(@result);
+                    }
+                } else {
+                    push @current_force_measurement, $byte;
                 }
-            }
-            else {
-                push @current_force_measurement, $byte;
-            }
 
-}
+            }
         }
     }
 }
 
-
 sub read_keyscanner {
-my $keyscanner = shift;
-my $InBytes = 1;
+    my $keyscanner = shift;
+    my $InBytes    = 1;
 
-my      $count_in = 0;
-my  $string_in;
-   # my $count_out     = $keyscanner->write('x');
-   # warn "write failed\n" unless ($count_out);
-#while (!$count_in) {
-     ($count_in, $string_in) = $keyscanner->read($InBytes);
-     # warn "read unsuccessful $InBytes != $count_in \n" unless ($count_in == $InBytes);
-#}
-my $bytes = $string_in;
-	if(!defined $bytes)  {
-	die "nothing from the keyscanner. is it connected and transmitting?";
-}
-	if ($bytes == 0) { return -1;} elsif ($bytes == 1) { return 1} else { return 0};
+    my $count_in = 0;
+    my $string_in;
+
+    # my $count_out     = $keyscanner->write('x');
+    # warn "write failed\n" unless ($count_out);
+    #while (!$count_in) {
+    ($count_in, $string_in) = $keyscanner->read($InBytes);
+
+    # warn "read unsuccessful $InBytes != $count_in \n" unless ($count_in == $InBytes);
+    #}
+    my $bytes = $string_in;
+    if (!defined $bytes) {
+        die "nothing from the keyscanner. is it connected and transmitting?";
+    }
+    if    ($bytes == 0) {return -1;}
+    elsif ($bytes == 1) {return 1}
+    else                {return 0}
 }
 
 #run_gantry_cmd("G1 Z".$offset);
@@ -164,22 +153,22 @@ my $bytes = $string_in;
 sub run_gantry_cmd {
     my $gantry        = shift;
     my $output_string = shift;
-    my $count_out     = $gantry->write( $output_string . "\r" );
+    my $count_out     = $gantry->write($output_string . "\r");
     warn "write failed\n" unless ($count_out);
 }
 
 sub init_keyscanner {
 
-    my $keyscanner_port =
-'/dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_5573631353735170C021-if00';
-    my $keyscanner = Device::SerialPort->new( $keyscanner_port, 1 )
-      || die "Can't open $keyscanner_port: $!";
+    my $keyscanner_port = '/dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_5573631353735170C021-if00';
+    my $keyscanner      = Device::SerialPort->new($keyscanner_port, 1)
+        || die "Can't open $keyscanner_port: $!";
 
     my $data   = $keyscanner->databits(8);
     my $baud   = $keyscanner->baudrate(57600);
     my $parity = $keyscanner->parity("none");
-    $keyscanner->buffers( 1, 1 );
+    $keyscanner->buffers(1, 1);
     $keyscanner->stopbits(1);
+
     #$keyscanner->handshake('none');
 
     #$keyscanner->handshake("rts");
@@ -192,15 +181,14 @@ sub init_keyscanner {
 
 sub init_ft {
 
-    my $force_tester_port =
-'/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0';
-    my $ft = Device::SerialPort->new( $force_tester_port, 1 )
-      || die "Can't open $force_tester_port: $!";
+    my $force_tester_port = '/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0';
+    my $ft                = Device::SerialPort->new($force_tester_port, 1)
+        || die "Can't open $force_tester_port: $!";
 
     my $data   = $ft->databits(8);
     my $baud   = $ft->baudrate(57600);
     my $parity = $ft->parity("none");
-    $ft->buffers( 7, 7 );
+    $ft->buffers(7, 7);
     $ft->stopbits(1);
     $ft->handshake('none');
 
@@ -209,7 +197,7 @@ sub init_ft {
     $ft->write_settings or die "no settings\n";
 
     # Set output to kg f
-    run_force_tester_cmd( $ft, 0xaa, 0x04, 0x55 );
+    run_force_tester_cmd($ft, 0xaa, 0x04, 0x55);
 
     # set output to realtime
     #run_force_tester_cmd($ft,0xaa,0x03,0x55);
@@ -220,61 +208,55 @@ sub init_ft {
 sub run_force_tester_cmd {
     my $ft            = shift;
     my @bytes         = (@_);
-    my $output_string = pack( "C*", @bytes );
+    my $output_string = pack("C*", @bytes);
     my $count_out     = $ft->write($output_string);
     warn "write failed\n" unless ($count_out);
 }
 
 sub init_gantry {
 
-    my $gantry_port =
-      '/dev/serial/by-id/usb-Malyan_System_Malyan_3D_Printer_2060396E4752-if00';
-    my $gantry = Device::SerialPort->new( $gantry_port, 1 )
-      || die "Can't open $gantry_port: $!";
+    my $gantry_port = '/dev/serial/by-id/usb-Malyan_System_Malyan_3D_Printer_2060396E4752-if00';
+    my $gantry      = Device::SerialPort->new($gantry_port, 1)
+        || die "Can't open $gantry_port: $!";
 
     my $data   = $gantry->databits(8);
     my $baud   = $gantry->baudrate(19200);
     my $parity = $gantry->parity("none");
-    $gantry->buffers( 8, 8 );
+    $gantry->buffers(8, 8);
     $gantry->stopbits(1);
     $gantry->handshake('none');
 
     #$gantry->handshake("rts");
 
     $gantry->write_settings or die "no settings\n";
-    run_gantry_cmd( $gantry, "G21" );    # set output to mm;
-    run_gantry_cmd( $gantry, "G91" );    # set motion to relative
+    run_gantry_cmd($gantry, "G21");    # set output to mm;
+    run_gantry_cmd($gantry, "G91");    # set motion to relative
 
     return $gantry;
 }
 
 sub return_measurement {
     my @data = (@_);
-    if ( ord( $data[0] ) == 0xAA && ord( $data[6] ) == 0x55 ) {
-        if ( ord( $data[5] ) == 0x2C ) {
+    if (ord($data[0]) == 0xAA && ord($data[6]) == 0x55) {
+        if (ord($data[5]) == 0x2C) {
+        } elsif (ord($data[5]) == 0x0C) {
+        } else {
+            warn "neither pos nor neg: " . ord($data[5]);
         }
-        elsif ( ord( $data[5] ) == 0x0C ) {
-        }
-        else { warn "neither pos nor neg: " . ord( $data[5] ); }
-        my $value =
-          ord( $data[4] ) +
-          ( 256 * ord( $data[3] ) ) +
-          ( 256 * 256 * ord( $data[2] ) ) +
-          ( 256 * 256 * 256 * ord( $data[1] ) );
-        if ( ord( $data[5] ) == 0x0C ) {
+        my $value = ord($data[4]) + (256 * ord($data[3])) + (256 * 256 * ord($data[2])) + (256 * 256 * 256 * ord($data[1]));
+        if (ord($data[5]) == 0x0C) {
             $value = 0 - $value;
         }
 
-        if ( $value > 10000 ) {
-warn "Got a crazy measurement. discarding\n";
-	return get_next_force_measurement();
-	} elsif ($value > 4000) {
+        if ($value > 10000) {
+            warn "Got a crazy measurement. discarding\n";
+            return get_next_force_measurement();
+        } elsif ($value > 4000) {
 
             die "Got a bad measurement. Bailing out. We got $value\n";
         }
         return $value;
-    }
-    else {
+    } else {
         die "had bad data in our measurement";
     }
 }
