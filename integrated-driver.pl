@@ -14,7 +14,7 @@ my $gantry = init_gantry();
 
 my $ft = init_ft();
 my $keyscanner = init_keyscanner();
-my $step             = 0.01;
+my $step             = 0.1;
 my $samples_per_step = 5;
 my $runs             = 3;
 my $force_max        = 180;
@@ -26,8 +26,6 @@ open(
       . "-samples-averaged-per-step-"
       . time() . ".csv"
 );
-$ft->purge_rx();
-#my $result = average_n_measurements(100); # Clear the buffer, I hope
 for ( my $run = 1 ; $run <= $runs ; $run++ ) {
 
     while (1) {
@@ -58,10 +56,6 @@ for ( my $run = 1 ; $run <= $runs ; $run++ ) {
     while (1) {
     run_gantry_cmd( $gantry, "G91" );    # set motion to relative
         run_gantry_cmd( $gantry, "G1 Z-" . $step );
-#	usleep(20);
-    # Throw away 10 measurements before we start off.
-    #   average_n_measurements(2);
-	$ft->purge_rx();
         my $result = average_n_measurements($samples_per_step);
 	my $actuated = read_keyscanner($keyscanner);
         push @data, [ $run, 'downstroke', $location, $result, $actuated ];
@@ -79,10 +73,6 @@ for ( my $run = 1 ; $run <= $runs ; $run++ ) {
 
     run_gantry_cmd( $gantry, "G91" );    # set motion to relative
         run_gantry_cmd( $gantry, "G1 Z" . $step );
-#	usleep(20);
-    # Throw away 10 measurements before we start off.
-    #  average_n_measurements(2);
-	$ft->purge_rx();
         my $result = average_n_measurements($samples_per_step);
 	my $actuated = read_keyscanner($keyscanner);
         warn "Run - $run - Upstroke - $location mm: $result g - Actuated: $actuated\n";
@@ -109,6 +99,7 @@ sub bail_out {
 sub average_n_measurements {
     my $samples = shift;
     my $result  = 0;
+	$ft->purge_rx();
     for ( my $i = 0 ; $i < $samples ; $i++ ) {
         my $point = get_next_force_measurement();
         $result += $point;
@@ -185,7 +176,7 @@ sub init_keyscanner {
       || die "Can't open $keyscanner_port: $!";
 
     my $data   = $keyscanner->databits(8);
-    my $baud   = $keyscanner->baudrate(9600);
+    my $baud   = $keyscanner->baudrate(57600);
     my $parity = $keyscanner->parity("none");
     $keyscanner->buffers( 1, 1 );
     $keyscanner->stopbits(1);
