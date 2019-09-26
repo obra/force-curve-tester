@@ -157,7 +157,13 @@ sub get_next_force_measurement {
                 if (ord($byte) == 0xAA && ($#current_force_measurement >= 6)) {    # 170
                     my @result = @current_force_measurement;
                     @current_force_measurement = ($byte, @bytes);
-                    return return_measurement(@result);
+                    if (ord($result[0]) != 0xAA || ord($result[6]) != 0x55 || ((ord($result[5]) != 0x2C) && (ord($result[5]) != 0x0C))) {
+                        warn "had bad result in our measurement";
+                        return get_next_force_measurement();
+                    }
+
+                    my $value = extract_base256_force_value(@result);
+                    return sanity_check_force_value($value);
 
                 } elsif ($#current_force_measurement > 5) {
                     warn "bad buffer";
@@ -271,19 +277,6 @@ sub init_gantry {
     run_gantry_cmd($gantry, "G91");    # set motion to relative
 
     return $gantry;
-}
-
-sub return_measurement {
-    my @data = (@_);
-
-    if (ord($data[0]) != 0xAA || ord($data[6]) != 0x55 || ((ord($data[5]) != 0x2C) && (ord($data[5]) != 0x0C))) {
-        warn "had bad data in our measurement";
-        return get_next_force_measurement();
-    }
-
-    my $value = extract_base256_force_value(@data);
-    return sanity_check_force_value($value);
-
 }
 
 sub extract_base256_force_value {
