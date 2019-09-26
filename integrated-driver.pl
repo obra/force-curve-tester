@@ -13,55 +13,33 @@ $|++;    # turn off buffering. flush writes to screen instantly
 my $gantry = init_gantry();
 my %data;
 my %locations;
-my $ft               = init_ft();
-my $keyscanner       = init_keyscanner();
-my $step             = 0.01;
-my $samples_per_step = 1;
-my $runs             = 4;
-my $force_max        = 180;
+my $ft                         = init_ft();
+my $keyscanner                 = init_keyscanner();
+my $step                       = 0.01;
+my $samples_per_step           = 1;
+my $runs                       = 4;
+my $max_keypress_force         = 180;
+my $force_tester_bailout_force = 1000;
+my $location                   = 0;
 
 for (my $run = 1; $run <= $runs; $run++) {
-
-    while (1) {
-
-        run_gantry_cmd($gantry, "G1 Z-0.01");
-
-        my $result = average_n_measurements(1);
-        warn "Dropping gantry. Got force $result\n";
-        if ($result > 1) {
-            warn "We're good to go: We've homed to the top of the switch";
-            last;
-        }
-    }
-
-    run_gantry_cmd($gantry, "G1 Z0.1");
-
-    # Zero the force tester
-    #run_force_tester_cmd( $ft, 0xaa, 0x01, 0x55 );
-    # Zero the force tester
-    #run_force_tester_cmd( $ft, 0xaa, 0x01, 0x55 );
-
-    # Throw away 2 measurements before we start off.
-    my $result = average_n_measurements(2);
-
-    my $location = -0.1;
+    probe_for_switch_top();
     warn "# Downstroke\n";
     while (1) {
         move_gantry_z(0 - $step);
-
-        record_reading('downstroke', $location);
+        my $result = record_reading('downstroke', $location);
         $location += $step;
-        if ($result > $force_max) {
-            warn "# Bottomed out after detecting $force_max g of force";
+
+        if ($result > $max_keypress_force) {
+            warn "# Bottomed out after detecting $max_keypress_force g of force";
             last;
         }
-
     }
 
     warn "Upstroke\n";
     while (1) {
         move_gantry_z($step);
-        record_reading('upstroke', $location);
+        my $result = record_reading('upstroke', $location);
         $location -= $step;
         if (($result <= 0 && $location < -0.1) || $location < -1) {
             warn "# All done!\n";
@@ -74,6 +52,25 @@ for (my $run = 1; $run <= $runs; $run++) {
 
 save_output();
 exit;
+
+sub probe_for_switch_top {
+    while (1) {
+        move_gantry_z(-0.01);
+        my $result = average_n_force_measurements(1);
+        warn "Dropping gantry to probe for key top. Got force $result\n";
+        if ($result > 1) {
+            warn "We're good to go: We've homed to the top of the switch";
+            last;
+        }
+    }
+
+    run_gantry_cmd($gantry, "G1 Z0.1");
+    $location = -0.1;
+
+    # Throw away 2 measurements before we start off.
+    my $result = average_n_force_measurements(2);
+
+}
 
 sub save_output {
 
@@ -114,7 +111,7 @@ sub record_reading {
     my $run      = shift;
     my $stroke   = shift;
     my $location = shift;
-    my $result   = average_n_measurements($samples_per_step);
+    my $result   = average_n_force_measurements($samples_per_step);
     my $actuated = read_keyscanner($keyscanner);
     print "Run - $run - $stroke - $location mm: $result g - ";
     if ($actuated != 0) {
@@ -125,6 +122,8 @@ sub record_reading {
     $data{$run}->{$stroke}->{$location}->{force}    = $result;
     $data{$run}->{$stroke}->{$location}->{actuated} = $actuated;
     $locations{$location}                           = 1;
+
+    return $result;
 }
 
 sub bail_out {
@@ -134,7 +133,7 @@ sub bail_out {
 
 my @current_force_measurement;
 
-sub average_n_measurements {
+sub average_n_force_measurements {
     my $samples = shift;
     my $result  = 0;
     $ft->purge_rx();
@@ -158,11 +157,8 @@ sub get_next_force_measurement {
                 if (ord($byte) == 0xAA && ($#current_force_measurement >= 6)) {    # 170
                     my @result = @current_force_measurement;
                     @current_force_measurement = ($byte, @bytes);
-
-                    #if ($#result == 6) {
                     return return_measurement(@result);
 
-                    #}
                 } elsif ($#current_force_measurement > 5) {
                     warn "bad buffer";
                     for my $b (@current_force_measurement) {
@@ -185,7 +181,7 @@ sub read_keyscanner {
 
     ($count_in, $string_in) = $keyscanner->read($InBytes);
 
-    $keyscanner->purge_rx();
+    #    $keyscanner->purge_rx();
 
     my $bytes = $string_in;
     if (!defined $bytes) {
@@ -195,8 +191,6 @@ sub read_keyscanner {
     elsif ($bytes == 1) {return 1}
     else                {return 0}
 }
-
-#run_gantry_cmd("G1 Z".$offset);
 
 sub run_gantry_cmd {
     my $gantry        = shift;
@@ -216,11 +210,6 @@ sub init_keyscanner {
     my $parity = $keyscanner->parity("none");
     $keyscanner->buffers(1, 1);
     $keyscanner->stopbits(1);
-
-    #$keyscanner->handshake('none');
-
-    #$keyscanner->handshake("rts");
-
     $keyscanner->write_settings or die "no settings\n";
 
     return $keyscanner;
@@ -236,11 +225,10 @@ sub init_ft {
     my $data   = $ft->databits(8);
     my $baud   = $ft->baudrate(57600);
     my $parity = $ft->parity("none");
-    $ft->buffers(7, 7);
+
+    #$ft->buffers(7, 7);
     $ft->stopbits(1);
     $ft->handshake('none');
-
-    #$ft->handshake("rts");
 
     $ft->write_settings or die "no settings\n";
 
@@ -250,6 +238,8 @@ sub init_ft {
     # set output to realtime
     #run_force_tester_cmd($ft,0xaa,0x03,0x55);
     sleep(1);
+
+    # Zero the force tester
     run_force_tester_cmd($ft, 0xaa, 0x01, 0x55);
     return $ft;
 
@@ -276,8 +266,6 @@ sub init_gantry {
     $gantry->stopbits(1);
     $gantry->handshake('none');
 
-    #$gantry->handshake("rts");
-
     $gantry->write_settings or die "no settings\n";
     run_gantry_cmd($gantry, "G21");    # set output to mm;
     run_gantry_cmd($gantry, "G91");    # set motion to relative
@@ -287,27 +275,36 @@ sub init_gantry {
 
 sub return_measurement {
     my @data = (@_);
-    if (ord($data[0]) == 0xAA && ord($data[6]) == 0x55) {
-        if (ord($data[5]) == 0x2C) {
-        } elsif (ord($data[5]) == 0x0C) {
-        } else {
-            warn "neither pos nor neg: " . ord($data[5]);
-        }
-        my $value = ord($data[4]) + (256 * ord($data[3])) + (256 * 256 * ord($data[2])) + (256 * 256 * 256 * ord($data[1]));
-        if (ord($data[5]) == 0x0C) {
-            $value = 0 - $value;
-        }
 
-        if ($value > 10000) {
-            warn "Got a crazy measurement. discarding\n";
-            return get_next_force_measurement();
-        } elsif ($value > 4000) {
-
-            die "Got a bad measurement. Bailing out. We got $value\n";
-        }
-        return $value;
-    } else {
+    if (ord($data[0]) != 0xAA || ord($data[6]) != 0x55 || ((ord($data[5]) != 0x2C) && (ord($data[5]) != 0x0C))) {
         warn "had bad data in our measurement";
         return get_next_force_measurement();
+    }
+
+    my $value = extract_base256_force_value(@data);
+    return sanity_check_force_value($value);
+
+}
+
+sub extract_base256_force_value {
+    my @data  = @_;
+    my $value = ord($data[4]) + (256 * ord($data[3])) + (256 * 256 * ord($data[2])) + (256 * 256 * 256 * ord($data[1]));
+    if (ord($data[5]) == 0x0C) {
+        $value = 0 - $value;
+    }
+    return $value;
+}
+
+sub sanity_check_force_value {
+    my $value = shift;
+    if ($value > 10000) {
+        warn "Got a crazy measurement. discarding\n";
+        return get_next_force_measurement();
+    } elsif ($value > $force_tester_bailout_force) {
+        move_gantry_z(5);
+        die "Got a force measurement of $value. Raising the gantry 5mm and exiting";
+    } else {
+
+        return $value;
     }
 }
