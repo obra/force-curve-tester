@@ -8,7 +8,7 @@ use warnings;
 use Device::SerialPort qw( :PARAM :STAT 0.07 );
 
 my $offset = shift;
-my $port = '/dev/ttyACM1';
+my $port = '/dev/ttyACM0';
 my $ob = Device::SerialPort->new($port, 1)
     || die "Can't open $port: $!";
     
@@ -22,8 +22,8 @@ $ob->handshake('none');
 #$ob->handshake("rts");
 
 $ob->write_settings or die "no settings\n";
-#run_cmd("G21") ; # set output to mm;
-#run_cmd("G91") ; # set motion to relative
+run_cmd("G21") ; # set output to mm;
+run_cmd("G91") ; # set motion to relative
 run_cmd("G1 Z".$offset);
 sub run_cmd {
 	my $output_string =shift;

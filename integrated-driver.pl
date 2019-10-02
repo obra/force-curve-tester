@@ -7,6 +7,8 @@ use Time::HiRes qw(usleep nanosleep);
 use strict;
 use warnings;
 use Device::SerialPort qw( :PARAM :STAT 0.07 );
+
+$SIG{INT} = sub {save_output() ; die "force exited"} ;
 my $maker = shift;
 my $type  = shift;
 $|++;    # turn off buffering. flush writes to screen instantly
@@ -15,34 +17,50 @@ my %data;
 my %locations;
 my $ft                         = init_ft();
 my $keyscanner                 = init_keyscanner();
-my $step                       = 0.01;
-my $samples_per_step           = 1;
-my $runs                       = 4;
-my $max_keypress_force         = 180;
-my $force_tester_bailout_force = 1000;
-my $location                   = 0;
+my $min_step = 0.04375/3;
 
+my $step                       = $min_step;
+# My gantry is a monoprice select mini v2.
+# Per https://www.mpselectmini.com/optimal_layer
+# So that motor [Z-Axis] is a 7.5°, 48 step motor as I just listed. Since
+# the motor is attached to a M4 rod, which has a 0.7 mm thread pitch, then
+# in one revolution makes the Z-Axis travel up or down 0.7 mm. Since it took
+# 48 steps to turn that rev, each step is 0.0145833333333333333333333333333
+# etc etc mm. To avoid rounding errors, you can use multiple of 3 of this
+# number, which is a nice and pretty 0.04375 mm. That is a nice and handy
+# number that effectively represents the layer heights that mathematically
+# work the best for layer heights for this printer.
+my $samples_per_step           = 3;
+my $runs                       = 10;
+my $max_keypress_force         = 110;
+my $force_tester_bailout_force = 1000;
+my $location_counter = 0;
+
+my $last_result = 0;
 for (my $run = 1; $run <= $runs; $run++) {
+#    $samples_per_step=$run;
     probe_for_switch_top();
     warn "# Downstroke\n";
     while (1) {
         move_gantry_z(0 - $step);
-        my $result = record_reading('downstroke', $location);
-        $location += $step;
+	($last_result, $location_counter) = record_reading($run,'downstroke', $step, $location_counter);
+	$location_counter++;
 
-        if ($result > $max_keypress_force) {
-            warn "# Bottomed out after detecting $max_keypress_force g of force";
+        if ($last_result > $max_keypress_force) {
+            warn "# Downstroke bottomed out after detecting $max_keypress_force g of force";
             last;
         }
     }
 
-    warn "Upstroke\n";
+    warn "# Upstroke\n";
     while (1) {
         move_gantry_z($step);
-        my $result = record_reading('upstroke', $location);
-        $location -= $step;
-        if (($result <= 0 && $location < -0.1) || $location < -1) {
-            warn "# All done!\n";
+	($last_result, $location_counter) = record_reading($run,'upstroke', $step, $location_counter);
+	$location_counter--;
+
+
+        if (($last_result <= 0 && $location_counter < -1) || $location_counter < -8) {
+            warn "# Upstroke all done\n";
             last;
         }
 
@@ -55,20 +73,21 @@ exit;
 
 sub probe_for_switch_top {
     while (1) {
-        move_gantry_z(-0.01);
-        my $result = average_n_force_measurements(1);
+        move_gantry_z(0-$step);
+        my $result = average_n_force_measurements(2);
         warn "Dropping gantry to probe for key top. Got force $result\n";
         if ($result > 1) {
             warn "We're good to go: We've homed to the top of the switch";
             last;
         }
     }
-
-    run_gantry_cmd($gantry, "G1 Z0.1");
-    $location = -0.1;
-
-    # Throw away 2 measurements before we start off.
-    my $result = average_n_force_measurements(2);
+    move_gantry_z($step*2);
+    $location_counter = -2;
+	sleep(1);
+    # Zero the force tester
+    run_force_tester_cmd($ft, 0xaa, 0x01, 0x55);
+	$ft->purge_rx();
+    my $result = average_n_force_measurements(10);
 
 }
 
@@ -110,58 +129,78 @@ sub move_gantry_z {
 sub record_reading {
     my $run      = shift;
     my $stroke   = shift;
-    my $location = shift;
+    my $step = shift;
+    my $location_counter = shift;
+    $ft->purge_rx();
     my $result   = average_n_force_measurements($samples_per_step);
+
+    if ($location_counter <= 0 && $result > 0 && $stroke eq 'downstroke') {	
+	warn "Just reset our first reading with force from ".($location_counter *$step) . " to $step\n";
+	$location_counter = 1;	
+    }
+    
+    my $location = $location_counter * $step;
+
     my $actuated = read_keyscanner($keyscanner);
-    print "Run - $run - $stroke - $location mm: $result g - ";
+
+    print "Run $run - $stroke - $location mm: $result g - ";
+
     if ($actuated != 0) {
         print "Actuated: $actuated";
     }
-    print "\n";
+    print " Delta " . ($last_result - $result)."\n";
 
     $data{$run}->{$stroke}->{$location}->{force}    = $result;
     $data{$run}->{$stroke}->{$location}->{actuated} = $actuated;
     $locations{$location}                           = 1;
 
-    return $result;
+    return ($result, $location_counter);
 }
 
 sub bail_out {
-    run_gantry_cmd($gantry, "G1 Z10");
+	move_gantry_z(10);
     die "We had something crazy happen. bailed.";
 }
 
-my @current_force_measurement;
 
 sub average_n_force_measurements {
     my $samples = shift;
     my $result  = 0;
-    $ft->purge_rx();
-    @current_force_measurement = ();
-    for (my $i = 0; $i < $samples; $i++) {
-        my $point = get_next_force_measurement();
-        print $point;
-        $result += $point;
+    # usleep(10000);
+    my @samples;
+    for (my $i = 0; $i < ( $samples); $i++) {
+  	print "+";	
+        push @samples, get_next_force_measurement();
+	print " ".$samples[-1]." ";
+
+	
     }
-    $result = $result / $samples;    #
+  
+    map { $result += $_ } @samples;
+    $result = $result / $samples;   
     return $result;
 }
 
+my @current_force_measurement;
 sub get_next_force_measurement {
 
+    shift @current_force_measurement;
     while (1) {
-        if (my $bytes = $ft->read(8)) {
-            print ".";
+    	$ft->purge_rx();
+	for (my $i = 0; $i< 50; $i++) {
+        my ($count_in,$bytes) = $ft->read(7);
+	if ($count_in) {
+			warn "Only got $count_in bytes when we expected 7" if ($count_in != 7);
             my @bytes = split(//, $bytes);
-            while (my $byte = shift @bytes) {
-                if (ord($byte) == 0xAA && ($#current_force_measurement >= 6)) {    # 170
-                    my @result = @current_force_measurement;
-                    @current_force_measurement = ($byte, @bytes);
+            while ($#bytes >=0) {
+	 my $byte = shift @bytes;
+                if (ord($byte) == 0x55 && ($#current_force_measurement >= 5)) {    # 0xaa is 170
+		    my @result = (@current_force_measurement, $byte);
+                    @current_force_measurement = (@bytes);
                     if (ord($result[0]) != 0xAA || ord($result[6]) != 0x55 || ((ord($result[5]) != 0x2C) && (ord($result[5]) != 0x0C))) {
                         warn "had bad result in our measurement";
                         return get_next_force_measurement();
                     }
-
                     my $value = extract_base256_force_value(@result);
                     return sanity_check_force_value($value);
 
@@ -170,12 +209,19 @@ sub get_next_force_measurement {
                     for my $b (@current_force_measurement) {
                         print ord($b) . ",";
                     }
-                }
+                     return get_next_force_measurement();
+                 } 
+
                 push @current_force_measurement, $byte;
             }
 
         }
+		   usleep(20000);
+	print ".";
     }
+	warn "Tried to get a measurement 50 times and failed. restarting comms with the force probe\n";
+ $ft                         = init_ft();
+	}
 }
 
 sub read_keyscanner {
@@ -231,6 +277,8 @@ sub init_ft {
     my $data   = $ft->databits(8);
     my $baud   = $ft->baudrate(57600);
     my $parity = $ft->parity("none");
+$ft->read_char_time(5);
+$ft->read_const_time(500);
 
     #$ft->buffers(7, 7);
     $ft->stopbits(1);
