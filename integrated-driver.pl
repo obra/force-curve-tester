@@ -30,10 +30,10 @@ my $step                       = $min_step;
 # number, which is a nice and pretty 0.04375 mm. That is a nice and handy
 # number that effectively represents the layer heights that mathematically
 # work the best for layer heights for this printer.
-my $samples_per_step           = 3;
-my $runs                       = 10;
+my $samples_per_step           = 1;
+my $runs                       = 3;
 my $max_keypress_force         = 110;
-my $force_tester_bailout_force = 1000;
+my $force_tester_bailout_force = 300;
 my $location_counter = 0;
 
 my $last_result = 0;
@@ -51,7 +51,7 @@ for (my $run = 1; $run <= $runs; $run++) {
             last;
         }
     }
-
+    sleep(1);
     warn "# Upstroke\n";
     while (1) {
         move_gantry_z($step);
@@ -59,7 +59,7 @@ for (my $run = 1; $run <= $runs; $run++) {
 	$location_counter--;
 
 
-        if (($last_result <= 0 && $location_counter < -1) || $location_counter < -8) {
+        if (($last_result <= 0 && $location_counter < -10)) {
             warn "# Upstroke all done\n";
             last;
         }
@@ -72,6 +72,7 @@ save_output();
 exit;
 
 sub probe_for_switch_top {
+    sleep(1);
     while (1) {
         move_gantry_z(0-$step);
         my $result = average_n_force_measurements(2);
@@ -81,8 +82,8 @@ sub probe_for_switch_top {
             last;
         }
     }
-    move_gantry_z($step*2);
-    $location_counter = -2;
+    move_gantry_z($step*10);
+    $location_counter = -10;
 	sleep(1);
     # Zero the force tester
     run_force_tester_cmd($ft, 0xaa, 0x01, 0x55);
@@ -136,7 +137,7 @@ sub record_reading {
 
     if ($location_counter <= 0 && $result > 0 && $stroke eq 'downstroke') {	
 	warn "Just reset our first reading with force from ".($location_counter *$step) . " to $step\n";
-	$location_counter = 1;	
+#	$location_counter = 1;	
     }
     
     my $location = $location_counter * $step;
@@ -148,7 +149,7 @@ sub record_reading {
     if ($actuated != 0) {
         print "Actuated: $actuated";
     }
-    print " Delta " . ($last_result - $result)."\n";
+    print " Delta " . ($result - $last_result )."\n";
 
     $data{$run}->{$stroke}->{$location}->{force}    = $result;
     $data{$run}->{$stroke}->{$location}->{actuated} = $actuated;
@@ -166,8 +167,8 @@ sub bail_out {
 sub average_n_force_measurements {
     my $samples = shift;
     my $result  = 0;
-    # usleep(10000);
     my @samples;
+    usleep(50000);
     for (my $i = 0; $i < ( $samples); $i++) {
   	print "+";	
         push @samples, get_next_force_measurement();
@@ -197,11 +198,13 @@ sub get_next_force_measurement {
                 if (ord($byte) == 0x55 && ($#current_force_measurement >= 5)) {    # 0xaa is 170
 		    my @result = (@current_force_measurement, $byte);
                     @current_force_measurement = (@bytes);
-                    if (ord($result[0]) != 0xAA || ord($result[6]) != 0x55 || ((ord($result[5]) != 0x2C) && (ord($result[5]) != 0x0C))) {
+                    if (ord($result[0]) != 0xAA || ord($result[6]) != 0x55 || 
+			((ord($result[5]) != 0x2C) && (ord($result[5]) != 0x0C) && (ord($result[5]) != 0x5C) && (ord($result[5]) != 0x7C))) {
                         warn "had bad result in our measurement";
                         return get_next_force_measurement();
                     }
                     my $value = extract_base256_force_value(@result);
+		    @current_force_measurement = ();
                     return sanity_check_force_value($value);
 
                 } elsif ($#current_force_measurement > 5) {
@@ -216,7 +219,7 @@ sub get_next_force_measurement {
             }
 
         }
-		   usleep(20000);
+		   usleep(2000);
 	print ".";
     }
 	warn "Tried to get a measurement 50 times and failed. restarting comms with the force probe\n";
@@ -270,7 +273,8 @@ sub init_keyscanner {
 
 sub init_ft {
 
-    my $force_tester_port = '/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0';
+#    my $force_tester_port = '/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0';
+    my $force_tester_port = '/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_D-if00-port0';
     my $ft                = Device::SerialPort->new($force_tester_port, 1)
         || die "Can't open $force_tester_port: $!";
 
@@ -327,7 +331,22 @@ sub init_gantry {
     return $gantry;
 }
 
-sub extract_base256_force_value {
+
+sub extract_base256_force_value { #ds2-5n
+    my @data  = @_;
+    my $value =((( ord($data[4]) +
+              ( ord($data[3]) *256))/1000 )  +  
+              ( ord($data[2])  ) +           
+              ( ord($data[1]) * 256)  );
+    if (ord($data[5]) == 0x5C) {
+        $value = 0 - $value;
+    }
+    return $value;
+}
+
+
+
+sub extract_base256_force_value_ds2_50n {
     my @data  = @_;
     my $value = ord($data[4]) + (256 * ord($data[3])) + (256 * 256 * ord($data[2])) + (256 * 256 * 256 * ord($data[1]));
     if (ord($data[5]) == 0x0C) {

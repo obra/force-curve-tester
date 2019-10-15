@@ -1,0 +1,178 @@
+#!/usr/bin/perl -w
+use warnings;
+use strict;
+
+
+use strict;
+use warnings;
+use Device::SerialPort qw( :PARAM :STAT 0.07 );
+
+
+my $port = '/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_D-if00-port0';
+my $ft = Device::SerialPort->new($port, 1)
+    || die "Can't open $port: $!";
+    
+
+my $data = $ft->databits(8);
+my $baud = $ft->baudrate(57600);
+my $parity = $ft->parity("none");
+$ft->buffers(8,8);
+$ft->stopbits(1);
+$ft->handshake('none');
+#$ft->handshake("rts");
+$ft->datatype('raw');
+
+$ft->write_settings or die "no settings\n";
+
+warn "here";
+# Set output to kg f
+my $output_string = pack("C*", 0xaa, 0x04, 0x55);
+my       $count_out = $ft->write($output_string);
+      warn "write failed\n"         unless ($count_out);
+
+# set output to realtime
+#my $output_string = pack("C*", 0xaa, 0x03, 0x55);
+#       $count_out = $ft->write($output_string);
+#      warn "write failed\n"         unless ($count_out);
+
+# zero output
+ $output_string = pack("C*", 0xaa, 0x01, 0x55);
+#       $count_out = $ft->write($output_string);
+#      warn "write failed\n"         unless ($count_out);
+
+
+
+warn "here";
+sub return_measurement(@) {
+	my @data = (@_);
+
+	if (ord($data[0]) == 0xAA &&  ord($data[6]) == 0x55) {
+		shift @data;
+		pop @data;
+	print "\nPacket: ";
+	for my $entry (@data) {
+		print ord($entry)." ";
+	}
+	print "\n";
+		if (ord($data[4]) == 0x5C) {
+		} elsif (ord($data[4]) == 0x7C) {
+		} else { warn "neither pos nor neg: ".ord($data[4]);}
+                    my $value = extract_base256_force_value(@data);
+		if (ord($data[4]) == 0x5C) { # 5C is neg, 7C is pos
+			#$value = 0-$value;
+		}
+		warn "Force measured: ".$value."\n";
+
+	}	
+}
+
+my @current_force_measurement;
+
+while(1){
+    if (my $bytes = $ft->read(7)) {
+	foreach my $byte (split(//,$bytes)) {
+	#printf('%#x ',ord($byte));
+	if (ord($byte) ==  0xAA && ($#current_force_measurement >=5)) {  # 170
+	#printf "Got a packet\n";
+		#		previous packet done;	
+		my @result = @current_force_measurement;
+		@current_force_measurement =  ($byte);
+		print "\n";
+		if ($#result == 6) {
+		return_measurement(@result);
+		}
+	} else {
+		push @current_force_measurement, $byte;
+	}
+		
+}
+    }
+}
+
+
+
+$ft->write_drain;
+
+
+
+
+
+
+
+sub get_next_force_measurement {
+
+    shift @current_force_measurement;
+    while (1) {
+    	$ft->purge_rx();
+	for (my $i = 0; $i< 50; $i++) {
+        my ($count_in,$bytes) = $ft->read(7);
+	if ($count_in) {
+			warn "Only got $count_in bytes when we expected 7" if ($count_in != 7);
+            my @bytes = split(//, $bytes);
+            while ($#bytes >=0) {
+	 my $byte = shift @bytes;
+                if (ord($byte) == 0x55 && ($#current_force_measurement >= 5)) {    # 0xaa is 170
+		    my @result = (@current_force_measurement, $byte);
+                    @current_force_measurement = (@bytes);
+                    if (ord($result[0]) != 0xAA || ord($result[6]) != 0x55 || ((ord($result[5]) != 0x2C) && (ord($result[5]) != 0x0C))) {
+                        warn "had bad result in our measurement";
+                        return get_next_force_measurement();
+                    }
+                    my $value = extract_base256_force_value(@result);
+                    return sanity_check_force_value($value);
+
+                } elsif ($#current_force_measurement > 5) {
+                    warn "bad buffer";
+                    for my $b (@current_force_measurement) {
+                        print ord($b) . ",";
+                    }
+                     return get_next_force_measurement();
+                 } 
+
+                push @current_force_measurement, $byte;
+            }
+
+        }
+		   usleep(20000);
+	print ".";
+    }
+	warn "Tried to get a measurement 50 times and failed. restarting comms with the force probe\n";
+ $ft                         = init_ft();
+	}
+}
+
+
+sub run_force_tester_cmd {
+    my $ft            = shift;
+    my @bytes         = (@_);
+    my $output_string = pack("C*", @bytes);
+    my $count_out     = $ft->write($output_string);
+    warn "write failed\n" unless ($count_out);
+}
+
+
+sub extract_base256_force_value {
+    my @data  = @_;
+    my $value =((( ord($data[3]) + 
+	      ( ord($data[2]) *256))/1000 )  + 
+              ( ord($data[1])  ) +  
+	      ( ord($data[0]) * 256)  );
+    if (ord($data[4]) == 0x5C) {
+        $value = 0 - $value;
+    }
+    return $value;
+}
+
+sub sanity_check_force_value {
+    my $value = shift;
+    if ($value > 10000) {
+        warn "Got a crazy measurement. discarding\n";
+        return get_next_force_measurement();
+    } elsif ($value > 300) {
+        move_gantry_z(5);
+        die "Got a force measurement of $value. Raising the gantry 5mm and exiting";
+    } else {
+
+        return $value;
+    }
+}
