@@ -40,6 +40,50 @@ my $location_counter           = 0;
 my $last_result      = 0;
 my $deepest_location = 0;
 
+
+
+# This program is a probe and data logger. All the analysis is going to be done later.
+# Every action that happens gets logged out to a CSV with a microsecond time stamp as it happens.
+
+=head1 New algorithm:
+
+Do this twice to make sure we know the right max depth:
+	
+	1 we home to the top of the switch
+	Then we do a slow calibration press 
+	where we move one step on the motor
+	 and get a stable read
+	
+	When the stable read is above max_keypress_force, 
+	we record the max depth of press.
+	
+	reverse the process.
+	moving up one step
+	getting a stable read
+	
+	When our step counter is back below zero, 
+	
+	
+If the max actuation distances are different by more than one step, bail out.
+
+Five times,
+	
+	we home again
+	
+	Do a fast plunge to max_actuation_distance
+	
+	record as many force readings as we can, never clearing the rx buffer.
+	
+	once we're sure we're done getting data, stop recording readings
+	
+	Do a fast raise back to step 0 - 5
+	
+	record as many force readings as we can, never clearing the rx buffer.
+	
+	once we're sure we're done getting data, stop recording readings
+
+=cut
+
 for (my $run = 1; $run <= $runs; $run++) {
     probe_for_switch_top();
     warn "# Downstroke\n";
